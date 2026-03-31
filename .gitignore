@@ -28,3 +28,6 @@ wp-config.php
 # Environment
 .env
 .env.*
+
+# Skills
+.github/

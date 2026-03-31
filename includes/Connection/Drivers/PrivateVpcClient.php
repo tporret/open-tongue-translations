@@ -142,6 +142,36 @@ final class PrivateVpcClient implements TranslationClientInterface {
 	}
 
 	/**
+	 * Fetch available languages from the VPC-resident LibreTranslate /languages endpoint.
+	 *
+	 * Refuses to issue the request if the configured IP is not in a private range.
+	 *
+	 * @return array<int, array{code: string, name: string}> Empty array on failure.
+	 */
+	public function listLanguages(): array {
+		if ( ! $this->isPrivateIp( $this->ip ) ) {
+			return [];
+		}
+
+		$endpoint = sprintf( 'http://%s:%d/languages', $this->ip, $this->port );
+		$args     = [ 'timeout' => $this->timeout ];
+
+		if ( $this->apiKey !== '' ) {
+			$args['headers'] = [ 'Authorization' => 'Bearer ' . $this->apiKey ];
+		}
+
+		$response = wp_remote_get( $endpoint, $args );
+
+		if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+			return [];
+		}
+
+		$data = json_decode( wp_remote_retrieve_body( $response ), associative: true );
+
+		return is_array( $data ) ? $data : [];
+	}
+
+	/**
 	 * Build the WP_Http arguments array for a translation request.
 	 *
 	 * Injects the optional Bearer token when an API key has been configured.

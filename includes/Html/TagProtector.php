@@ -106,15 +106,68 @@ final class TagProtector {
 		$foundTokens = preg_match_all( self::PLACEHOLDER_PATTERN, $translatedText );
 
 		if ( $foundTokens !== count( $map ) ) {
-			error_log( sprintf(
-				'[OpenTongue] TagProtector::restore() — token mismatch: expected %d, found %d. Returning original HTML.',
-				count( $map ),
-				(int) $foundTokens
-			) );
+			$this->logIntegrityFailure( $originalHtml, $translatedText, $map, (int) $foundTokens );
 			return $originalHtml;
 		}
 
 		return str_replace( array_keys( $map ), array_values( $map ), $translatedText );
+	}
+
+	// =========================================================================
+	// Private: integrity logging
+	// =========================================================================
+
+	/**
+	 * Write a token-mismatch event to the ott_integrity_log table.
+	 *
+	 * Silently no-ops if the table does not yet exist (e.g. before migration runs).
+	 *
+	 * @param string               $sourceHtml      Pre-translation HTML.
+	 * @param string               $translatedText  Post-translation output with tokens.
+	 * @param array<string,string> $map             Placeholder map from protect().
+	 * @param int                  $foundTokens     How many tokens survived in output.
+	 */
+	private function logIntegrityFailure(
+		string $sourceHtml,
+		string $translatedText,
+		array $map,
+		int $foundTokens
+	): void {
+		global $wpdb;
+
+		$table = $wpdb->prefix . 'ott_integrity_log';
+
+		// Bail silently if the table does not exist.
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) !== $table ) {
+			error_log( sprintf(
+				'[OpenTongue] TagProtector: token mismatch (expected %d, found %d) — integrity log table missing.',
+				count( $map ),
+				$foundTokens
+			) );
+			return;
+		}
+
+		// Retrieve the target lang from the interceptor's context if stored as a global;
+		// fall back to an empty string if not available.
+		$targetLang = (string) ( $GLOBALS['ott_current_target_lang'] ?? '' );
+		$requestUrl = isset( $_SERVER['REQUEST_URI'] )
+			? substr( sanitize_text_field( wp_unslash( (string) $_SERVER['REQUEST_URI'] ) ), 0, 2048 )
+			: '';
+
+		$wpdb->insert(
+			$table,
+			[
+				'source_hash'     => md5( $sourceHtml ),
+				'source_text'     => $sourceHtml,
+				'target_lang'     => $targetLang,
+				'expected_tokens' => count( $map ),
+				'found_tokens'    => $foundTokens,
+				'request_url'     => $requestUrl,
+				'occurred_at'     => current_time( 'mysql' ),
+			],
+			[ '%s', '%s', '%s', '%d', '%d', '%s', '%s' ]
+		);
 	}
 
 	// =========================================================================

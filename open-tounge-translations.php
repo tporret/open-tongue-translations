@@ -72,6 +72,16 @@ add_action( 'plugins_loaded', function (): void {
 } );
 
 /**
+ * Initialise the admin settings UI on every admin request (including AJAX),
+ * but never on the front end.
+ */
+add_action( 'plugins_loaded', function (): void {
+	if ( is_admin() ) {
+		OpenToungeTranslations\Admin\OTT_Admin_Settings::get_instance()->init();
+	}
+} );
+
+/**
  * Safety net: if WP-CLI is available but plugins_loaded has already fired
  * (e.g. when WP-CLI bootstraps the environment), register commands via the
  * `cli_init` hook which always fires after `plugins_loaded`.

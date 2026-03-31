@@ -4,7 +4,7 @@ Tags:              translation, multilingual, privacy, libretranslate, local
 Requires at least: 6.0
 Tested up to:      6.9
 Requires PHP:      8.2
-Stable tag:        0.4.0
+Stable tag:        0.6.0
 License:           GPL-2.0-or-later
 License URI:       https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -105,7 +105,7 @@ This plugin makes no outbound connections to any third-party service. All transl
 1. Upload the `open-tongue-translations` folder to `/wp-content/plugins/`.
 2. Activate the plugin through the **Plugins** screen in WordPress.
 3. Ensure a LibreTranslate instance is running and reachable from the WordPress host.
-4. Set the following WordPress options (via WP-CLI or a later settings UI):
+4. Configure the plugin via the **Open Tongue** settings page in the WordPress admin, or use WP-CLI:
 
 **Localhost mode (default)**
 
@@ -133,6 +133,12 @@ This plugin makes no outbound connections to any third-party service. All transl
     # Days before unused translations are pruned (default: 90)
     wp option update ltp_prune_days 60
 
+    # Enable browser locale auto-detection
+    wp option update ltp_detect_browser_locale 1
+
+    # Enable validation mode (admin-only preview)
+    wp option update ltp_validation_mode 1
+
     # Cloudflare direct-API credentials (Mode B — skip if using the CF plugin)
     wp option update ltp_cf_zone_id    your-zone-id
     wp option update ltp_cf_api_token  your-api-token
@@ -156,6 +162,22 @@ Yes. Add domain names to the `ltp_bypass_domains` option (an array). Example via
 = Why is my admin dashboard not being translated? =
 
 By design. The Output Buffer Interceptor only runs on front-end page requests (`is_admin() === false` and `wp_doing_ajax() === false`). The Gettext Interceptor also fires on admin screens — add `'default'` to `ltp_bypass_domains` if you want to suppress that.
+
+= Can I configure the plugin without WP-CLI? =
+
+Yes. All settings are now available through the **Open Tongue** admin menu. The settings page provides tabbed controls for language selection, connection mode, exclusion rules, and performance tuning.
+
+= What is Validation Mode? =
+
+When `ltp_validation_mode` is enabled, translation only applies to admin users (`manage_options`). All other visitors receive the original untranslated site. Use this to preview translations before making them live.
+
+= What is the `ott_user_lang` cookie? =
+
+When a visitor selects a language via the `[open_tongue_switcher]` shortcode or the `ott/language-switcher` block, their preference is stored in an `HttpOnly`, `SameSite=Lax` cookie named `ott_user_lang`. This overrides both the `Accept-Language` header and the global `ltp_target_lang` option for all subsequent requests from that browser.
+
+= How do I add a language switcher to my site? =
+
+Use the `[open_tongue_switcher]` shortcode in any post, page, or widget area. For a link list instead of a dropdown, use `[open_tongue_switcher style="list"]`. The block is also available in the Gutenberg block inserter under the "Open Tongue" category.
 
 = What happens if the LibreTranslate backend is unavailable? =
 
@@ -219,7 +241,12 @@ MySQL evaluates the existing `is_manual` flag inside the same atomic statement b
 
 ==== WordPress actions/filters — complete list ====
 
-* `plugins_loaded` (priority 10) — plugin boot; (priority 99) — static-cache compat registration.
+* `plugins_loaded` (priority 10) — plugin boot: language service, router, and switcher registered; (priority 99) — static-cache compat registration.
+* `admin_menu` — `OTT_Admin_Settings` registers the top-level **Open Tongue** menu page.
+* `admin_init` — settings groups (`ott_engine`, `ott_connectivity`, `ott_performance`) registered via `register_setting` / `add_settings_section` / `add_settings_field`.
+* `init` (priority 1) — `OTT_Language_Router::handleAutoDetect()` parses `Accept-Language` header and writes `ott_user_lang` cookie when `ltp_detect_browser_locale` is on.
+* `init` (priority 5) — interceptors wired only when `OTT_Language_Router::isTranslationAllowed()` returns true (respects `ltp_validation_mode`).
+* `rest_api_init` — `POST /ott/v1/set-lang` endpoint registered by `OTT_Language_Router`.
 * `cron_schedules` — adds the `ltp_weekly` schedule (604 800 s interval).
 * `ltp_prune_translations` — `PruningJob::run()` executes a deletion batch.
 * `gettext` (priority 10) — `GettextInterceptor::intercept()`.
@@ -230,7 +257,39 @@ MySQL evaluates the existing `is_manual` flag inside the same atomic statement b
 * `cloudflare_purge_by_url` — **fired** by `CloudflareCompat` (Mode A, single URL).
 * `cloudflare_purge_everything` — **fired** by `CloudflareCompat` (Mode A, full purge).
 
-=== Task 4 — Developer & Language Expert Features ===
+=== Task 5 — Admin Settings UI ===
+
+==== Tab rendering without a full page reload ====
+
+The five tabs are implemented via the standard `?page=open-tongue&tab=<slug>` query-string pattern rather than JavaScript SPAs. Each tab form posts to `options.php` (processed by the WordPress Settings API) or back to the settings page for CRUD actions. This keeps the implementation dependency-free and compatible with all caching plugins that bypass JavaScript.
+
+==== Privacy Guard resolution logic ====
+
+`OTT_Admin_Settings::renderPrivacyGuard()` reads `ltp_connection_mode`. For `localhost` and `socket` modes it always shows green. For `vpc` mode it calls `filter_var($ip, FILTER_VALIDATE_IP)` and then checks RFC 1918 ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and the loopback range (`127.0.0.0/8`). Any IP that fails these checks renders a red banner with a direct link to the Connectivity tab.
+
+==== Dashboard health checks ====
+
+The Dashboard tab replicates the logic of `wp ott status --verbose` in the browser. It calls `wp_remote_get( $languagesUrl )` with a 3-second timeout to test API reachability and reads `wp_using_ext_object_cache()` for L1 status, `$wpdb->get_var()` for the translation table row count for L2 status, and `wp_next_scheduled('ltp_prune_translations')` for the cron check. No new cron jobs or transients are created; the tab runs all checks inline on load.
+
+=== Task 6 — Core Language Routing & Selection ===
+
+==== Language resolution priority chain ====
+
+`OTT_Language_Router::getEffectiveLang()` evaluates three sources in order, stopping at the first valid match:
+
+1. **Cookie** (`ott_user_lang`) — validated against the supported-languages list before use. A cookie containing an unsupported code is ignored and cleared.
+2. **`Accept-Language` header** — only evaluated when `ltp_detect_browser_locale` is `true`. The header is split on `,`, each tag stripped of quality values (`q=…`), and the primary subtag (e.g. `fr` from `fr-CA`) is matched against the language codes returned by `OTT_Language_Service`. The highest-quality match wins.
+3. **`ltp_target_lang` option** — the global fallback; always present.
+
+==== Cookie security ====
+
+The `ott_user_lang` cookie is written with `setcookie()` using `HttpOnly => true`, `SameSite => Lax`, and `Path` scoped to the WordPress site URL path. It is never output via JavaScript and is not readable by front-end scripts. The REST `set-lang` endpoint validates the supplied code before writing the cookie, rejecting unknown codes with a `400` response.
+
+==== Transient cache for supported languages ====
+
+`OTT_Language_Service` stores the `/languages` response under the key `ott_supported_langs`. The transient lifetime is 86 400 seconds (24 hours). An in-process static cache means repeat calls within the same PHP request never hit the transient store. `bustCache()` deletes the transient and clears the in-process copy; the `OTT_Admin_Settings` connectivity form calls it after saving new connection settings.
+
+===  Task 4 — Developer & Language Expert Features ===
 
 ==== Why TagProtector prefers DOMDocument over regex ====
 
@@ -295,6 +354,23 @@ A pattern that produces `false` (PCRE engine error) or triggers the custom handl
 
 == Changelog ==
 
+= 0.6.0 =
+* `OTT_Language_Service`: fetches supported languages from the configured LibreTranslate driver; 24-hour transient cache (`ott_supported_langs`) with in-process memoisation; `bustCache()` called on connectivity settings save.
+* `OTT_Language_Router`: singleton resolving effective language via cookie → `Accept-Language` header → global option priority chain. Enforces `ltp_validation_mode` (admin-only preview). Writes `HttpOnly`, `SameSite=Lax` `ott_user_lang` cookie. Registers `POST /ott/v1/set-lang` REST endpoint.
+* `OTT_Language_Switcher`: `[open_tongue_switcher style="select|list"]` shortcode; `ott/language-switcher` Gutenberg block (PHP-rendered, delegates to shortcode). Inline `fetch()`-based JS calls `set-lang` and reloads the page on language change.
+* Interceptors now registered at `init` priority 5 (was `plugins_loaded`) so language resolution and validation-mode checks complete first.
+* New options: `ltp_detect_browser_locale` (bool), `ltp_validation_mode` (bool).
+
+= 0.5.0 =
+* `OTT_Admin_Settings`: singleton; top-level **Open Tongue** admin menu (`dashicons-translation`); five-tab settings page (Dashboard, Translation Engine, Connectivity, Exclusions & Glossary, Performance).
+* Dashboard tab: inline system health checks — DB tables, API reachability, L1/L2 cache status, WP-Cron, Privacy Status badge.
+* Translation Engine tab: `ltp_target_lang` select populated from `OTT_Language_Service`; `ltp_detect_browser_locale` checkbox.
+* Connectivity tab: radio group for `ltp_connection_mode` with JS-toggled conditional rows; Privacy Guard banner (RFC 1918 validation).
+* Exclusions & Glossary tab: full CRUD for `{prefix}ott_exclusion_rules` — table listing with Enable/Disable/Delete (nonce-verified); Add Rule card for CSS/XPath/Regex types.
+* Performance tab: `ltp_prune_days` select; WP Rocket and Cloudflare compat toggles with inactive-plugin notices.
+* All forms use `settings_fields()` / `check_admin_referer()`; all output escaped; all inputs sanitized via typed callbacks.
+* Wired via `plugins_loaded` hook in main plugin file.
+
 = 0.4.0 =
 * WP-CLI suite: `wp ott translate` (batch/post/string), `wp ott cache` (warm/flush/status), `wp ott glossary` (import/export/list), `wp ott status` (health check, exits 1 on failure).
 * `HtmlAwareTranslator` decorator wraps the raw connection client — all translation requests now pass through the HTML-protection pipeline before reaching the API.
@@ -332,6 +408,12 @@ A pattern that produces `false` (PCRE engine error) or triggers the custom handl
 * `OutputBufferInterceptor` — full-page HTML buffering with two-pass regex text extraction.
 
 == Upgrade Notice ==
+
+= 0.6.0 =
+No database changes. The `ott_user_lang` cookie is written on the client side by `OTT_Language_Router` automatically when browser-locale detection is enabled. Existing `ltp_target_lang` installs are unaffected — the router falls back to it when no cookie or header match is found.
+
+= 0.5.0 =
+No database changes. The admin settings page is available immediately after upgrade at **Open Tongue** in the WordPress admin menu. Existing WP-CLI-configured options are read and displayed correctly without any migration.
 
 = 0.4.0 =
 Runs `Migration_1_2_0` automatically on the next page load to create the `{prefix}ott_exclusion_rules` table. No manual steps required. WP-CLI commands (`wp ott translate`, `wp ott cache`, `wp ott glossary`, `wp ott status`) are available immediately after upgrade.

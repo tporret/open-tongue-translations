@@ -25,7 +25,9 @@ use OpenToungeTranslations\Cli\TranslateCommand;
 use OpenToungeTranslations\Compat\StaticCacheCompatManager;
 use OpenToungeTranslations\Connection\ConnectionFactory;
 use OpenToungeTranslations\Connection\Exception\ConnectionException;
+use OpenToungeTranslations\Admin\OTT_Batch_REST_Controller;
 use OpenToungeTranslations\Database\Migrations\Migration_1_2_0;
+use OpenToungeTranslations\Database\Migrations\Migration_1_3_0;
 use OpenToungeTranslations\Database\Schema;
 use OpenToungeTranslations\Database\TranslationRepository;
 use OpenToungeTranslations\Exclusion\ExclusionEngine;
@@ -35,6 +37,9 @@ use OpenToungeTranslations\Html\HtmlAwareTranslator;
 use OpenToungeTranslations\Html\TagProtector;
 use OpenToungeTranslations\Interception\GettextInterceptor;
 use OpenToungeTranslations\Interception\OutputBufferInterceptor;
+use OpenToungeTranslations\Language\OTT_Language_Router;
+use OpenToungeTranslations\Language\OTT_Language_Service;
+use OpenToungeTranslations\Language\OTT_Language_Switcher;
 use OpenToungeTranslations\Maintenance\PruningJob;
 
 /**
@@ -86,6 +91,11 @@ final class Plugin {
 			( new Migration_1_2_0() )->up();
 		}
 
+		// Run Migration_1_3_0 if the integrity_log table hasn't been created yet.
+		if ( version_compare( (string) get_option( 'ott_db_version', '0.0.0' ), Migration_1_3_0::VERSION, '<' ) ) {
+			( new Migration_1_3_0() )->up();
+		}
+
 		// --- 2. Translation client -------------------------------------------
 		try {
 			$client = $this->factory->make();
@@ -107,8 +117,18 @@ final class Plugin {
 			return;
 		}
 
-		/** @var string $targetLang The BCP-47 language tag the site should be translated into. */
-		$targetLang = (string) get_option( 'ltp_target_lang', 'en' );
+		// --- Language service & router --------------------------------------
+		// The service provides the language catalogue (cached 24 h via transient).
+		// The router resolves the per-request target language and enforces the
+		// optional validation-mode gate. Both are bootstrapped before the cache
+		// stack so that the router cookie can be written during init priority 1.
+		$langService = new OTT_Language_Service( $this->factory );
+		$langRouter  = OTT_Language_Router::getInstance( $langService );
+		$langRouter->register();
+
+		// Language switcher: shortcode + Gutenberg block + REST assets.
+		$langSwitcher = new OTT_Language_Switcher( $langService, $langRouter );
+		$langSwitcher->register();
 
 		// --- 3. Cache stack --------------------------------------------------
 		$objectCache   = new ObjectCacheDriver();
@@ -129,12 +149,33 @@ final class Plugin {
 		$htmlClient      = new HtmlAwareTranslator( $client, $tagProtector, $attrPreserver, $exclusionEngine );
 
 		// --- 5. Interception -------------------------------------------------
-		$gettextInterceptor = new GettextInterceptor( $htmlClient, $targetLang, $cacheManager );
-		$gettextInterceptor->register();
+		// Deferred to init priority 5 so that:
+		//   a) current_user_can() is reliable (auth cookie processed by WP).
+		//   b) The router's handleAutoDetect() (init pri 1) has already run and
+		//      the cookie-detected locale is available via getEffectiveLang().
+		//   c) Validation mode can gate the entire interceptor stack with
+		//      isTranslationAllowed() before any filter or buffer is registered.
+		add_action(
+			'init',
+			static function () use ( $htmlClient, $cacheManager, $exclusionEngine, $langRouter ): void {
+				if ( ! $langRouter->isTranslationAllowed() ) {
+					return;
+				}
 
-		$outputBufferInterceptor = new OutputBufferInterceptor( $htmlClient, $targetLang );
-		$outputBufferInterceptor->setExclusionEngine( $exclusionEngine );
-		$outputBufferInterceptor->register();
+				$targetLang = $langRouter->getEffectiveLang();
+
+				// Expose the active locale to TagProtector for integrity logging.
+				$GLOBALS['ott_current_target_lang'] = $targetLang;
+
+				$gettextInterceptor = new GettextInterceptor( $htmlClient, $targetLang, $cacheManager );
+				$gettextInterceptor->register();
+
+				$outputBufferInterceptor = new OutputBufferInterceptor( $htmlClient, $targetLang );
+				$outputBufferInterceptor->setExclusionEngine( $exclusionEngine );
+				$outputBufferInterceptor->register();
+			},
+			5
+		);
 
 		// --- 5. Static-cache compat ------------------------------------------
 		// Registered at priority 99 on plugins_loaded so all third-party plugins
@@ -152,7 +193,16 @@ final class Plugin {
 		$pruningJob = new PruningJob( $repo );
 		$pruningJob->register();
 
-		// --- 7. WP-CLI command registration ----------------------------------
+		// --- 7. Batch REST controller ----------------------------------------
+		$batchController = new OTT_Batch_REST_Controller( $htmlClient, $repo, $cacheManager );
+		add_action(
+			'rest_api_init',
+			static function () use ( $batchController ): void {
+				$batchController->register();
+			}
+		);
+
+		// --- 8. WP-CLI command registration ----------------------------------
 		// Commands are registered inside boot() so they receive fully-wired
 		// dependencies rather than recreating the DI graph in the bootstrap.
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {

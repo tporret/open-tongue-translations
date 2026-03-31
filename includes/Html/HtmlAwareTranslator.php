@@ -83,6 +83,15 @@ final class HtmlAwareTranslator implements TranslationClientInterface {
 		return $this->innerClient->healthCheck();
 	}
 
+	/**
+	 * Delegate language listing to the inner raw client.
+	 *
+	 * {@inheritDoc}
+	 */
+	public function listLanguages(): array {
+		return $this->innerClient->listLanguages();
+	}
+
 	// =========================================================================
 	// Private: the 9-step pipeline
 	// =========================================================================

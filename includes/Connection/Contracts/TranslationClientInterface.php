@@ -47,4 +47,16 @@ interface TranslationClientInterface {
 	 * @return bool True when the backend is reachable and responding correctly.
 	 */
 	public function healthCheck(): bool;
+
+	/**
+	 * Fetch the list of language pairs supported by the translation backend.
+	 *
+	 * Returns an empty array on any network or parse failure — callers must
+	 * treat an empty return as a transient error, not a permanent state.
+	 *
+	 * @return array<int, array{code: string, name: string}> Indexed list of
+	 *         language descriptors, each containing at minimum 'code' (BCP-47)
+	 *         and 'name' (human-readable label).
+	 */
+	public function listLanguages(): array;
 }

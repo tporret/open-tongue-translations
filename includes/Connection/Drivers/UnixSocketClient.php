@@ -169,6 +169,47 @@ final class UnixSocketClient implements TranslationClientInterface {
 	}
 
 	/**
+	 * Fetch available languages from the LibreTranslate /languages endpoint over the Unix socket.
+	 *
+	 * @return array<int, array{code: string, name: string}> Empty array on failure.
+	 */
+	public function listLanguages(): array {
+		if ( ! $this->isSocketAvailable() ) {
+			return [];
+		}
+
+		try {
+			$ch = curl_init();
+
+			curl_setopt_array(
+				$ch,
+				[
+					CURLOPT_URL              => 'http://localhost/languages',
+					CURLOPT_UNIX_SOCKET_PATH => $this->socketPath,
+					CURLOPT_RETURNTRANSFER   => true,
+					CURLOPT_TIMEOUT          => $this->timeout,
+					CURLOPT_HTTPHEADER       => [ 'Host: localhost' ],
+				]
+			);
+
+			$result   = curl_exec( $ch );
+			$httpCode = (int) curl_getinfo( $ch, CURLINFO_HTTP_CODE );
+			curl_close( $ch );
+
+			if ( $result === false || $httpCode !== 200 ) {
+				return [];
+			}
+
+			$data = json_decode( (string) $result, associative: true );
+
+			return is_array( $data ) ? $data : [];
+
+		} catch ( \Throwable ) {
+			return [];
+		}
+	}
+
+	/**
 	 * Confirm the socket file exists and is readable before attempting I/O.
 	 *
 	 * @return bool True when the socket is present and readable.

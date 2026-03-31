@@ -117,6 +117,24 @@ final class LocalhostRestClient implements TranslationClientInterface {
 	}
 
 	/**
+	 * Fetch available languages from the LibreTranslate /languages endpoint.
+	 *
+	 * @return array<int, array{code: string, name: string}> Empty array on failure.
+	 */
+	public function listLanguages(): array {
+		$endpoint = sprintf( 'http://%s:%d/languages', $this->host, $this->port );
+		$response = wp_remote_get( $endpoint, [ 'timeout' => $this->timeout ] );
+
+		if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+			return [];
+		}
+
+		$data = json_decode( wp_remote_retrieve_body( $response ), associative: true );
+
+		return is_array( $data ) ? $data : [];
+	}
+
+	/**
 	 * Build the WP_Http arguments array for a translation request.
 	 *
 	 * Kept private so the HTTP contract (headers, body shape, timeout) is

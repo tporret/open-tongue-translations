@@ -1,0 +1,30 @@
+# Composer
+vendor/
+composer.lock
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Build output
+dist/
+build/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# WordPress specifics
+*.log
+wp-config.php
+
+# PHPStan
+.phpstan-cache/
+
+# Environment
+.env
+.env.*

@@ -56,7 +56,7 @@ final class OTT_Manual_Edits_Table extends \WP_List_Table {
 			'source_text'     => __( 'Original String', 'open-tongue-translations' ),
 			'translated_text' => __( 'Translated Text', 'open-tongue-translations' ),
 			'target_lang'     => __( 'Locale', 'open-tongue-translations' ),
-			'last_used_at'    => __( 'Last Used', 'open-tongue-translations' ),
+			'last_used'    => __( 'Last Used', 'open-tongue-translations' ),
 		];
 	}
 
@@ -68,7 +68,7 @@ final class OTT_Manual_Edits_Table extends \WP_List_Table {
 	public function get_sortable_columns(): array {
 		return [
 			'target_lang'  => [ 'target_lang',  false ],
-			'last_used_at' => [ 'last_used_at', true  ],
+			'last_used' => [ 'last_used', true  ],
 		];
 	}
 
@@ -101,13 +101,13 @@ final class OTT_Manual_Edits_Table extends \WP_List_Table {
 		$offset       = ( $current_page - 1 ) * $per_page;
 
 		$search  = isset( $_REQUEST['s'] ) ? sanitize_text_field( wp_unslash( (string) $_REQUEST['s'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification
-		$orderby = sanitize_sql_orderby( isset( $_REQUEST['orderby'] ) ? wp_unslash( (string) $_REQUEST['orderby'] ) : 'last_used_at' ) ?: 'last_used_at'; // phpcs:ignore WordPress.Security.NonceVerification
+		$orderby = sanitize_sql_orderby( isset( $_REQUEST['orderby'] ) ? wp_unslash( (string) $_REQUEST['orderby'] ) : 'last_used' ) ?: 'last_used'; // phpcs:ignore WordPress.Security.NonceVerification
 		$order   = isset( $_REQUEST['order'] ) && strtoupper( (string) $_REQUEST['order'] ) === 'ASC' ? 'ASC' : 'DESC'; // phpcs:ignore WordPress.Security.NonceVerification
 
 		// Whitelist sortable columns to prevent SQL injection.
 		$allowed_cols = array_keys( $this->get_sortable_columns() );
 		if ( ! in_array( $orderby, $allowed_cols, true ) ) {
-			$orderby = 'last_used_at';
+			$orderby = 'last_used';
 		}
 
 		if ( $search !== '' ) {
@@ -257,12 +257,12 @@ final class OTT_Manual_Edits_Table extends \WP_List_Table {
 	}
 
 	/**
-	 * last_used_at column — human-readable diff.
+	 * last_used column — human-readable diff.
 	 *
 	 * @param array<string,mixed> $item
 	 */
-	public function column_last_used_at( array $item ): string {
-		$raw = (string) ( $item['last_used_at'] ?? '' );
+	public function column_last_used( array $item ): string {
+		$raw = (string) ( $item['last_used'] ?? '' );
 		if ( $raw === '' || $raw === '0000-00-00 00:00:00' ) {
 			return esc_html__( 'Never', 'open-tongue-translations' );
 		}

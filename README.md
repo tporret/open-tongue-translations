@@ -1,14 +1,6 @@
 # Open Tongue Translations
 
-**Contributors:** tporret  
-**Tags:** translation, multilingual, privacy, libretranslate, local  
-**Requires at least:** 6.0  
-**Tested up to:** 6.9  
-**Requires PHP:** 8.2  
-**Stable tag:** 0.6.0  
-**License:** [GPL-2.0-or-later](https://www.gnu.org/licenses/gpl-2.0.html)
-
-> A privacy-first WordPress translation plugin. Core guarantee: no translation data ever leaves the host server.
+A privacy-first WordPress translation plugin. Core guarantee: no translation data ever leaves the host server.
 
 ---
 
